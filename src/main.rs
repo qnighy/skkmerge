@@ -65,14 +65,22 @@ fn read_all_encoded<I: BufRead>(mut file: I) -> String {
 }
 
 fn detect_encoding<I: BufRead>(f: &mut I) -> Option<String> {
+    let (ret, pos) = detect_encoding_from_buf(f.fill_buf().unwrap());
+    f.consume(pos);
+    ret
+}
+
+fn detect_encoding_from_buf(buf: &[u8]) -> (Option<String>, usize) {
     use regex::bytes::Regex;
 
-    let buf = f.fill_buf().unwrap();
     if &buf[..2] == b"\xFE\xFF" {
-        return Some("utf-16be".to_string());
+        return (Some("utf-16be".to_string()), 2);
     }
     if &buf[..2] == b"\xFF\xFE" {
-        return Some("utf-16le".to_string());
+        return (Some("utf-16le".to_string()), 2);
+    }
+    if &buf[..3] == b"\xEF\xBB\xBF" {
+        return (Some("utf-8".to_string()), 3);
     }
 
     let eol = buf.iter().position(|&b| b == b'\r' || b == b'\n')
@@ -83,9 +91,9 @@ fn detect_encoding<I: BufRead>(f: &mut I) -> Option<String> {
     if let Some(m) = re.captures(buf) {
         let name = m.get(1).unwrap().as_bytes();
         if let Ok(name) = str::from_utf8(name) {
-            return Some(name.to_string());
+            return (Some(name.to_string()), 0);
         }
     }
 
-    return None;
+    return (None, 0);
 }
