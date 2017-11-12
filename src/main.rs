@@ -1,10 +1,14 @@
 extern crate regex;
+extern crate encoding;
 #[macro_use]
 extern crate clap;
 
-use std::io::{Read, BufRead, BufReader};
+use std::io::{self, BufRead, BufReader};
 use std::fs::File;
 use std::str;
+use std::mem::replace;
+use encoding::{RawDecoder};
+use encoding::label::encoding_from_whatwg_label;
 use clap::{Arg, App};
 
 fn main() {
@@ -29,13 +33,98 @@ fn main() {
     let subtract_filenames = matches.values_of("subtract_files")
         .map(|a| a.collect()).unwrap_or_else(|| vec![]);
     for &filename in &merge_filenames {
+        eprintln!("Loading {}...", filename);
         let file = File::open(filename).unwrap();
         let mut file = BufReader::new(file);
-        let encoding = detect_encoding(&mut file).unwrap_or_else(|| "euc-jp".to_string());
-        println!("{:?}", encoding);
+        let mut encoding = detect_encoding(&mut file).unwrap_or_else(
+            || "euc-jp".to_string());
+        if encoding == "euc-jis-2004" {
+            encoding = "euc-jp".to_string();
+        }
+        let encoding = encoding_from_whatwg_label(&encoding).unwrap();
+        for line in DecodedLines::new(
+            file, RawDecoderProxy(encoding.raw_decoder())) {
+            // eprint!(".");
+            line.unwrap();
+        }
     }
     for &filename in &subtract_filenames {
         println!("{:?}", filename);
+    }
+}
+
+pub struct DecodedLines<I: BufRead, D: RawDecoder> {
+    reader: I,
+    decoder: D,
+    buffer: String,
+    finished: bool,
+}
+
+impl<I: BufRead, D: RawDecoder> DecodedLines<I, D> {
+    pub fn new(reader: I, decoder: D) -> Self {
+        Self { reader, decoder, buffer: "".to_string(), finished: false }
+    }
+}
+
+impl<I: BufRead, D: RawDecoder> Iterator for DecodedLines<I, D> {
+    type Item = io::Result<String>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        loop {
+            if !self.finished {
+                let (pos, err) = {
+                    let buf = match self.reader.fill_buf() {
+                        Ok(buf) => buf,
+                        Err(e) => return Some(Err(e)),
+                    };
+
+                    if buf.is_empty() {
+                        self.finished = true;
+                        (0, self.decoder.raw_finish(&mut self.buffer))
+                    } else {
+                        self.decoder.raw_feed(buf, &mut self.buffer)
+                    }
+                };
+
+                self.reader.consume(pos);
+
+                if let Some(_) = err {
+                    return Some(Err(io::Error::new(
+                                io::ErrorKind::InvalidData,
+                                "Decoding error")));
+                }
+            }
+            if let Some(pos) = self.buffer.find("\n") {
+                let line = self.buffer[..pos+1].to_string();
+                self.buffer.drain(..pos+1);
+                return Some(Ok(line));
+            } else if self.finished {
+                if self.buffer.is_empty() {
+                    return None
+                }
+                return Some(Ok(replace(&mut self.buffer, "".to_string())));
+            }
+        }
+    }
+}
+
+use encoding::{StringWriter, CodecError};
+
+pub struct RawDecoderProxy(Box<RawDecoder>);
+
+impl RawDecoder for RawDecoderProxy {
+    fn from_self(&self) -> Box<RawDecoder> {
+        self.0.from_self()
+    }
+    fn raw_feed(&mut self, input: &[u8], output: &mut StringWriter)
+        -> (usize, Option<CodecError>) {
+        self.0.raw_feed(input, output)
+    }
+    fn raw_finish(&mut self, output: &mut StringWriter) -> Option<CodecError> {
+        self.0.raw_finish(output)
+    }
+    fn is_ascii_compatible(&self) -> bool {
+        self.0.is_ascii_compatible()
     }
 }
 
