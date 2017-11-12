@@ -6,6 +6,7 @@ extern crate clap;
 use std::io::{self, BufRead, BufReader};
 use std::fs::File;
 use std::str;
+use regex::Regex;
 use encoding::DecoderTrap;
 use encoding::label::encoding_from_whatwg_label;
 use clap::{Arg, App};
@@ -27,6 +28,8 @@ fn main() {
              .help("Specify files to merge."))
         .get_matches();
 
+    let comment_re = Regex::new(r"^\s*;").unwrap();
+
     let merge_filenames = matches.values_of("files").map(|a| a.collect())
         .unwrap_or_else(|| vec!["-"]);
     let subtract_filenames = matches.values_of("subtract_files")
@@ -37,6 +40,9 @@ fn main() {
         let file = BufReader::new(file);
         let s = read_all_encoded(file);
         for line in s.lines() {
+            if comment_re.is_match(line) {
+                continue;
+            }
             eprintln!("{:?}", line);
         }
     }
