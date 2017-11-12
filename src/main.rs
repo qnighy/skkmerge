@@ -6,7 +6,6 @@ extern crate clap;
 use std::io::{self, BufRead, BufReader};
 use std::fs::File;
 use std::str;
-use std::mem::drop;
 use encoding::DecoderTrap;
 use encoding::label::encoding_from_whatwg_label;
 use clap::{Arg, App};
@@ -35,18 +34,8 @@ fn main() {
     for &filename in &merge_filenames {
         eprintln!("Loading {}...", filename);
         let file = File::open(filename).unwrap();
-        let mut file = BufReader::new(file);
-        let mut encoding = detect_encoding(&mut file).unwrap_or_else(
-            || "euc-jp".to_string());
-        if encoding == "euc-jis-2004" {
-            eprintln!("euc-jis-2004: reading as euc-jp");
-            encoding = "euc-jp".to_string();
-        }
-        let encoding = encoding_from_whatwg_label(&encoding).unwrap();
-        let mut bytebuf = Vec::new();
-        io::copy(&mut file, &mut bytebuf).unwrap();
-        let s = encoding.decode(&bytebuf, DecoderTrap::Replace).unwrap();
-        drop(bytebuf);
+        let file = BufReader::new(file);
+        let s = read_all_encoded(file);
         for line in s.lines() {
             eprintln!("{:?}", line);
         }
@@ -54,6 +43,19 @@ fn main() {
     for &filename in &subtract_filenames {
         println!("{:?}", filename);
     }
+}
+
+fn read_all_encoded<I: BufRead>(mut file: I) -> String {
+    let mut encoding = detect_encoding(&mut file).unwrap_or_else(
+        || "euc-jp".to_string());
+    if encoding == "euc-jis-2004" {
+        eprintln!("euc-jis-2004: reading as euc-jp");
+        encoding = "euc-jp".to_string();
+    }
+    let encoding = encoding_from_whatwg_label(&encoding).unwrap();
+    let mut bytebuf = Vec::new();
+    io::copy(&mut file, &mut bytebuf).unwrap();
+    return encoding.decode(&bytebuf, DecoderTrap::Replace).unwrap();
 }
 
 fn detect_encoding<I: BufRead>(f: &mut I) -> Option<String> {
